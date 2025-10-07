@@ -11,7 +11,7 @@ from trl import SFTConfig, SFTTrainer
 from tqdm import tqdm
 import pandas as pd
 from nltk.translate.bleu_score import corpus_bleu, sentence_bleu, SmoothingFunction
-
+from transformers import EarlyStoppingCallback
 # Configuration
 MAX_SEQ_LENGTH = 2048
 DTYPE = None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
@@ -54,7 +54,7 @@ def setup_model_and_tokenizer():
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                        "gate_proj", "up_proj", "down_proj"],
         lora_alpha=16,
-        lora_dropout=0,  # Supports any, but = 0 is optimized
+        lora_dropout=0.1,  # Supports any, but = 0 is optimized
         bias="none",    # Supports any, but = "none" is optimized
         use_gradient_checkpointing="unsloth",  # True or "unsloth" for very long context
         random_state=3407,
@@ -102,7 +102,9 @@ def load_and_prepare_dataset(tokenizer):
 def train_model(model, tokenizer, dataset):
     """Train the model"""
     print("Starting training...")
-    
+    early_stopping = EarlyStoppingCallback(
+        early_stopping_patience=3,
+    )
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -113,24 +115,26 @@ def train_model(model, tokenizer, dataset):
         dataset_num_proc=2,
         packing=False,  # Can make training 5x faster for short sequences.
         args=SFTConfig(
-            per_device_train_batch_size=2,
+            per_device_train_batch_size=4,
             gradient_accumulation_steps=4,
             warmup_ratio=0.1,
             num_train_epochs=10,  # Set this for 1 full training run.
-            learning_rate=2e-4,
-            logging_steps=10,
+            learning_rate=1e-4,
+            logging_steps=20,
             optim="adamw_8bit",
             weight_decay=0.01,
-            lr_scheduler_type="linear",
+            max_grad_norm=1.0,
+            lr_scheduler_type="inverse_sqrt",
             seed=3407,
             output_dir="outputs",
             report_to="none",  # Use this for WandB etc
             eval_strategy="epoch",
             save_strategy="epoch",
-            save_total_limit=3,
+            save_total_limit=2,
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss",
         ),
+        callbacks=[early_stopping], 
     )
     
     # Show memory stats before training

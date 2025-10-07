@@ -10,13 +10,13 @@ from datasets import load_dataset
 from trl import SFTConfig, SFTTrainer
 from tqdm import tqdm
 import pandas as pd
-from nltk.translate.bleu_score import corpus_bleu, sentence_bleu, SmoothingFunction
+import sacrebleu
 from transformers import EarlyStoppingCallback
 # Configuration
 MAX_SEQ_LENGTH = 2048
 DTYPE = None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
 LOAD_IN_4BIT = True
-MODEL_NAME = "unsloth/gemma-2-2b"
+MODEL_NAME = "unsloth/gemma-2-9b"
 
 # Data paths - adjust these according to your setup
 TRAIN_DATA_PATH = "gemma_sft_train.json"
@@ -187,26 +187,23 @@ def evaluate_model(model, tokenizer, dataset, split_name):
     data = dataset[split_name]
     preds, refs, instructions, inputs = [], [], [], []
     
-    smoothie = SmoothingFunction().method4
-    
+
     for sample in tqdm(data, desc=f"Generating on {split_name} set"):
         pred = generate_output(model, tokenizer, sample["instruction"], sample["input"])
         preds.append(pred)
         refs.append(sample["output"])
         instructions.append(sample["instruction"])
         inputs.append(sample["input"])
-    
-    # Calculate BLEU scores for each sentence
+
+    # Calculate sentence BLEU using sacrebleu
     sentence_bleus = [
-        sentence_bleu([r.split()], p.split(), smoothing_function=smoothie)
-        for r, p in zip(refs, preds)
+        sacrebleu.sentence_bleu(pred, [ref]).score
+        for pred, ref in zip(preds, refs)
     ]
-    
-    # Calculate corpus BLEU
-    corpus_bleu_score = corpus_bleu(
-        [[r.split()] for r in refs], [p.split() for p in preds], smoothing_function=smoothie
-    )
-    
+
+    # Calculate corpus BLEU using sacrebleu
+    corpus_bleu_score = sacrebleu.corpus_bleu(preds, [refs]).score
+
     # Create DataFrame
     df = pd.DataFrame({
         "instruction": instructions,
@@ -216,7 +213,7 @@ def evaluate_model(model, tokenizer, dataset, split_name):
         "sentence_bleu": sentence_bleus,
     })
     df["corpus_bleu"] = corpus_bleu_score
-    
+
     print(f"✅ {split_name.upper()} corpus BLEU: {corpus_bleu_score:.4f}")
     return df, corpus_bleu_score
 

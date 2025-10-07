@@ -14,5 +14,6 @@ pip install nltk
 pip install pandas openpyxl
 pip install datasets
 pip install tqdm
+pip install sacrebleu
 
 ```
